@@ -1,0 +1,19 @@
+[project]
+name = "learn-llm"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "daniel5u", email = "danielsuuuuuu@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.14.0",
+    "transformers>=5.17.0",
+]
+
+[project.scripts]
+learn-llm = "learn_llm:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
