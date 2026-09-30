@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from learn-llm!")
+"""learn_llm: 从零手写的 LLM 框架。先实现 GPT-2，再一步步升级到现代架构。"""
