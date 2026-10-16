@@ -1,0 +1,10 @@
+[package]
+name = "rustmind"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+indicatif = "0.18"
+ron = "0.12.2"
+serde = { version = "1.0.229", features = ["derive"] }
+tiktoken-rs = "0.12.0"

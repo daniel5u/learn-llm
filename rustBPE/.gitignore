@@ -1,0 +1,5 @@
+/target
+
+# generated tokenizer output and training data
+*.ron
+src/tinyShakeSpeare.txt
