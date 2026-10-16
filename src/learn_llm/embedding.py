@@ -55,6 +55,6 @@ class Embedding(nn.Module):
         #                                  可以写 device=token_ids.device
         #     广播（broadcasting）          [B, T, d] + [T, d] 会自动把后者复制到每个 batch 上
         wte_result = self.wte[token_ids]
-        wpe_result = self.wpe[torch.arange(token_ids.shape[1])]
+        wpe_result = self.wpe[: token_ids.shape[1]]
 
         return wte_result + wpe_result
