@@ -180,7 +180,6 @@ class MultiHeadAttention(nn.Module):
         # TODO 5: 和 forward 的前半段一样，但调用的是 causal_attention_weights
         q = self.q_proj(x)
         k = self.k_proj(x)
-        v = self.v_proj(x)
 
         q_split = self.split_heads(q)
         k_split = self.split_heads(k)
