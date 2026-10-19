@@ -118,6 +118,16 @@ class MultiHeadAttention(nn.Module):
         # TODO 1: 检查 d_model 能被 n_heads 整除（用 assert），
         #         保存 self.n_heads 和 self.d_head，
         #         创建四个线性层 q_proj / k_proj / v_proj / out_proj，都是 d_model -> d_model
+        assert d_model % n_heads == 0
+        
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+
+        self.out_proj = nn.Linear(d_model, d_model)
 
     def split_heads(self, x: Tensor) -> Tensor:
         """[B, T, d_model] -> [B, H, T, d_head]"""
@@ -128,7 +138,10 @@ class MultiHeadAttention(nn.Module):
         #                                  最后一维 d_model 被拆成 [H, d_head]：
         #                                  前 d_head 个数归第 0 个头，接下来 d_head 个归第 1 个头……
         #     x.transpose(1, 2)            交换第 1、2 维: [B, T, H, d_head] -> [B, H, T, d_head]
-        raise NotImplementedError
+        B, T, _ = x.size()
+        x_split = x.view(B, T, self.n_heads ,self.d_head)
+        x_split = x_split.transpose(1, 2)
+        return x_split
 
     def merge_heads(self, x: Tensor) -> Tensor:
         """[B, H, T, d_head] -> [B, T, d_model]，split_heads 的逆操作"""
@@ -139,13 +152,39 @@ class MultiHeadAttention(nn.Module):
         #     x.reshape(B, T, d_model)     和 view 类似，但在内存不连续时会自动复制一份。
         #                                  transpose 之后内存就不连续了，这里直接用 view 会报错
         #                                  （也可以写 x.contiguous().view(...)）
-        raise NotImplementedError
+        B, H, T, d_head = x.size()
+        x = x.transpose(1, 2)
+        return x.reshape(B, T, H*d_head)
 
     def forward(self, x: Tensor) -> Tensor:
         # TODO 4: 投影 -> split_heads -> causal_attention -> merge_heads -> out_proj
-        raise NotImplementedError
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
+
+        q_split = self.split_heads(q)
+        k_split = self.split_heads(k)
+        v_split = self.split_heads(v)
+
+        atten = causal_attention(q_split, k_split, v_split)
+
+        merged_atten = self.merge_heads(atten)
+
+        out = self.out_proj(merged_atten)
+
+        return out
+
 
     def attention_pattern(self, x: Tensor) -> Tensor:
         """返回每个头的注意力权重 [B, H, T, T]。以后做可解释性实验（画 attention 图）用。"""
         # TODO 5: 和 forward 的前半段一样，但调用的是 causal_attention_weights
-        raise NotImplementedError
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
+
+        q_split = self.split_heads(q)
+        k_split = self.split_heads(k)
+
+        weights = causal_attention_weights(q_split, k_split)
+
+        return weights
