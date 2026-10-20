@@ -1,83 +1,14 @@
-import math
-
 import pytest
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 from learn_llm.attention import MultiHeadAttention
-from learn_llm.block import MLP, Block, LayerNorm, gelu
+from learn_llm.block import MLP, Block
 
 
 # ---------------------------------------------------------------
-# TODO 1 & 2: LayerNorm
-# ---------------------------------------------------------------
-def test_layernorm_init():
-    ln = LayerNorm(16)
-    assert isinstance(ln.weight, torch.nn.Parameter)
-    assert isinstance(ln.bias, torch.nn.Parameter)
-    torch.testing.assert_close(ln.weight.data, torch.ones(16))
-    torch.testing.assert_close(ln.bias.data, torch.zeros(16))
-    assert ln.eps == 1e-5
-
-
-def test_layernorm_output_has_mean_0_and_var_1():
-    torch.manual_seed(0)
-    ln = LayerNorm(16)
-    x = torch.randn(2, 5, 16) * 7 + 3
-    y = ln(x)
-    assert y.shape == (2, 5, 16)
-    # 每个 token 自己的 16 个数：均值 0，方差 1
-    torch.testing.assert_close(y.mean(dim=-1), torch.zeros(2, 5), atol=1e-5, rtol=0)
-    torch.testing.assert_close(y.var(dim=-1, unbiased=False), torch.ones(2, 5), atol=1e-3, rtol=0)
-
-
-def test_layernorm_matches_pytorch():
-    torch.manual_seed(0)
-    ln = LayerNorm(16)
-    with torch.no_grad():
-        ln.weight.copy_(torch.randn(16))
-        ln.bias.copy_(torch.randn(16))
-    x = torch.randn(2, 5, 16)
-    expected = F.layer_norm(x, (16,), ln.weight, ln.bias, eps=1e-5)
-    torch.testing.assert_close(ln(x), expected)
-
-
-def test_layernorm_treats_each_token_independently():
-    torch.manual_seed(0)
-    ln = LayerNorm(16)
-    x = torch.randn(2, 5, 16)
-    x2 = x.clone()
-    x2[1, 3] = torch.randn(16) * 100
-    y, y2 = ln(x), ln(x2)
-    changed = torch.zeros(2, 5, dtype=torch.bool)
-    changed[1, 3] = True
-    torch.testing.assert_close(y[~changed], y2[~changed])
-
-
-def test_layernorm_constant_input_does_not_blow_up():
-    # 所有数都一样时方差是 0，靠 eps 避免除以 0
-    y = LayerNorm(16)(torch.full((1, 1, 16), 5.0))
-    assert torch.isfinite(y).all()
-    torch.testing.assert_close(y, torch.zeros(1, 1, 16))
-
-
-# ---------------------------------------------------------------
-# TODO 3: gelu
-# ---------------------------------------------------------------
-def test_gelu_matches_pytorch():
-    x = torch.linspace(-6, 6, 101)
-    torch.testing.assert_close(gelu(x), F.gelu(x, approximate="tanh"))
-
-
-def test_gelu_shape_of_the_curve():
-    torch.testing.assert_close(gelu(torch.tensor(0.0)), torch.tensor(0.0))
-    # 很大的正数 ≈ 自己，很负的数 ≈ 0
-    torch.testing.assert_close(gelu(torch.tensor(10.0)), torch.tensor(10.0))
-    assert gelu(torch.tensor(-10.0)).abs() < 1e-6
-
-
-# ---------------------------------------------------------------
-# TODO 4 & 5: MLP
+# TODO 1 & 2: MLP
 # ---------------------------------------------------------------
 @pytest.fixture
 def mlp():
@@ -88,13 +19,15 @@ def mlp():
 def test_mlp_init(mlp):
     assert mlp.fc.weight.shape == (128, 32)
     assert mlp.proj.weight.shape == (32, 128)
+    assert isinstance(mlp.gelu, nn.GELU)
+    assert mlp.gelu.approximate == "tanh"
 
 
 def test_mlp_forward(mlp):
     x = torch.randn(2, 5, 32)
     out = mlp(x)
     assert out.shape == (2, 5, 32)
-    h = x @ mlp.fc.weight.T + mlp.fc.bias
+    h = x @ mlp.fc.weight.T + mlp.fc.bias  # [2, 5, 128]
     h = F.gelu(h, approximate="tanh")
     torch.testing.assert_close(out, h @ mlp.proj.weight.T + mlp.proj.bias)
 
@@ -110,7 +43,7 @@ def test_mlp_tokens_do_not_talk_to_each_other(mlp):
 
 
 # ---------------------------------------------------------------
-# TODO 6 & 7: Block
+# TODO 3 & 4: Block
 # ---------------------------------------------------------------
 @pytest.fixture
 def block():
@@ -119,10 +52,11 @@ def block():
 
 
 def test_block_init(block):
-    assert isinstance(block.ln_1, LayerNorm)
+    assert isinstance(block.ln_1, nn.LayerNorm)
     assert isinstance(block.attn, MultiHeadAttention)
-    assert isinstance(block.ln_2, LayerNorm)
+    assert isinstance(block.ln_2, nn.LayerNorm)
     assert isinstance(block.mlp, MLP)
+    assert block.ln_1.normalized_shape == (32,)
     assert block.attn.n_heads == 4
 
 
@@ -135,6 +69,21 @@ def test_block_is_causal(block):
     x2 = x.clone()
     x2[:, 3:] = torch.randn(1, 3, 32)
     torch.testing.assert_close(block(x)[:, :3], block(x2)[:, :3])
+
+
+def test_block_does_not_modify_its_input(block):
+    """x = x + ... 会新建一个 tensor；x += ... 是原地修改，会把调用者传进来的 x 也改掉。"""
+    x = torch.randn(2, 5, 32)
+    x_before = x.clone()
+    block(x)
+    torch.testing.assert_close(x, x_before)
+
+
+def test_block_backward_works(block):
+    """原地修改还会破坏反向传播：ln_1 为了算梯度存下了 x，x += ... 把它覆盖了。"""
+    x = torch.randn(2, 5, 32, requires_grad=True)
+    block(x * 1).sum().backward()
+    assert x.grad is not None
 
 
 def test_block_with_silent_sublayers_is_identity(block):
@@ -175,10 +124,9 @@ def load_gpt2_block(ours: Block, hf_block) -> None:
     from test_03_multihead import load_gpt2_attention
 
     load_gpt2_attention(ours.attn, hf_block.attn)
+    ours.ln_1.load_state_dict(hf_block.ln_1.state_dict())
+    ours.ln_2.load_state_dict(hf_block.ln_2.state_dict())
     with torch.no_grad():
-        for name in ("ln_1", "ln_2"):
-            getattr(ours, name).weight.copy_(getattr(hf_block, name).weight)
-            getattr(ours, name).bias.copy_(getattr(hf_block, name).bias)
         ours.mlp.fc.weight.copy_(hf_block.mlp.c_fc.weight.T)
         ours.mlp.fc.bias.copy_(hf_block.mlp.c_fc.bias)
         ours.mlp.proj.weight.copy_(hf_block.mlp.c_proj.weight.T)
