@@ -1,1 +1,0 @@
-/Users/daniel/Programming/rustmind/target/release/rustmind: /Users/daniel/Programming/rustmind/src/byte_map.rs /Users/daniel/Programming/rustmind/src/main.rs /Users/daniel/Programming/rustmind/src/tokenizer.rs

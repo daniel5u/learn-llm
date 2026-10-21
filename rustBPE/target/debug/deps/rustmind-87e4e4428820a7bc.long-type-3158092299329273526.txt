@@ -1,1 +1,0 @@
-Map<std::str::Bytes<'_>, fn(u8) -> u32 {<u32 as From<u8>>::from}>
