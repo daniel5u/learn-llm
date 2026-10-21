@@ -44,7 +44,10 @@ from learn_llm.gpt import GPT, GPTConfig
 
 
 def get_batch(
-    data: Tensor, batch_size: int, seq_len: int, generator: torch.Generator | None = None
+    data: Tensor,
+    batch_size: int,
+    seq_len: int,
+    generator: torch.Generator | None = None,
 ) -> tuple[Tensor, Tensor]:
     """data [N] -> x [B, T], y [B, T]
 
@@ -58,7 +61,17 @@ def get_batch(
     #     torch.randint(low, high, (n,), generator=generator)   [low, high) 里的 n 个随机整数
     #                                  起点最大只能到 N - T - 1，否则 y 会越界
     #     torch.stack([t1, t2, ...])   把 B 个 [T] 叠成 [B, T]
-    raise NotImplementedError
+    index = torch.randint(
+        low=0,
+        high=data.shape[0] - seq_len,
+        size=(batch_size,),
+        generator=generator,
+    )
+    x_slices = [data[i : i + seq_len] for i in index]
+    y_slices = [data[i + 1 : i + seq_len + 1] for i in index]
+    x = torch.stack([x_slice for x_slice in x_slices])
+    y = torch.stack([y_slice for y_slice in y_slices])
+    return x, y
 
 
 def compute_loss(logits: Tensor, targets: Tensor) -> Tensor:
@@ -70,10 +83,14 @@ def compute_loss(logits: Tensor, targets: Tensor) -> Tensor:
     #                                        内部做了 softmax + 取正确答案的 -log 概率 + 求平均
     #     t.reshape(-1, V)                   [B, T, V] -> [B*T, V]
     #     t.reshape(-1)                      [B, T]    -> [B*T]
-    raise NotImplementedError
+    logits = logits.reshape(-1, logits.shape[-1])
+    targets = targets.reshape(-1)
+    return F.cross_entropy(input=logits, target=targets)
 
 
-def train_step(model: GPT, optimizer: torch.optim.Optimizer, x: Tensor, y: Tensor) -> float:
+def train_step(
+    model: GPT, optimizer: torch.optim.Optimizer, x: Tensor, y: Tensor
+) -> float:
     """一次参数更新，返回这一步的 loss（Python float）"""
     # TODO 3: 训练的核心 5 步:
     #           forward -> 算 loss -> 清空旧梯度 -> backward -> 更新参数
@@ -83,7 +100,12 @@ def train_step(model: GPT, optimizer: torch.optim.Optimizer, x: Tensor, y: Tenso
     #     loss.backward()
     #     optimizer.step()
     #     loss.item()                  0 维 tensor -> Python float
-    raise NotImplementedError
+    logits = model(x)
+    ce = compute_loss(logits, y)
+    optimizer.zero_grad()
+    ce.backward()
+    optimizer.step()
+    return ce.item()
 
 
 @torch.no_grad()
@@ -101,7 +123,15 @@ def estimate_loss(
     #   会用到的 API:
     #     model.eval() / model.train()   切换模式（我们的模型里还没有 dropout，但养成习惯）
     #     @torch.no_grad()               已经加在函数上了：只评估、不训练，不需要梯度
-    raise NotImplementedError
+    model.eval()
+    loss = 0.0
+    for _ in range(n_batches):
+        x, y = get_batch(data, batch_size, seq_len, generator)
+        logits = model(x)
+        l = compute_loss(logits, y)
+        loss += l.item()
+    model.train()
+    return loss / n_batches
 
 
 @dataclass
@@ -115,7 +145,9 @@ class TrainConfig:
     seed: int = 0
 
 
-def train(model: GPT, train_data: Tensor, val_data: Tensor, cfg: TrainConfig) -> list[dict]:
+def train(
+    model: GPT, train_data: Tensor, val_data: Tensor, cfg: TrainConfig
+) -> list[dict]:
     """训练 cfg.max_steps 步，返回评估记录 [{"step": ..., "train": ..., "val": ...}, ...]
 
     第 0 步（训练前）和之后每 eval_interval 步、以及最后一步都要评估一次。
@@ -130,7 +162,63 @@ def train(model: GPT, train_data: Tensor, val_data: Tensor, cfg: TrainConfig) ->
     #
     #   提示：for step in range(cfg.max_steps + 1)，在循环开头判断要不要评估，
     #         最后一轮（step == max_steps）只评估、不再训练。
-    raise NotImplementedError
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
+
+    history = []
+
+    x, y = get_batch(train_data, cfg.batch_size, cfg.seq_len, generator)
+
+    for i in range(cfg.max_steps):
+        if i % cfg.eval_interval == 0:
+            train_loss = estimate_loss(
+                model,
+                train_data,
+                cfg.batch_size,
+                cfg.seq_len,
+                cfg.eval_batches,
+                generator=generator,
+            )
+            val_loss = estimate_loss(
+                model,
+                val_data,
+                cfg.batch_size,
+                cfg.seq_len,
+                cfg.eval_batches,
+                generator=generator,
+            )
+
+            record = {"step": i, "train": train_loss, "val": val_loss}
+
+            print(f"step {i}: train {train_loss:.3f}, val {val_loss:.3f}")
+
+            history.append(record)
+
+        if i != cfg.max_steps - 1:
+            train_step(model, optimizer, x, y)
+
+    train_loss = estimate_loss(
+        model,
+        train_data,
+        cfg.batch_size,
+        cfg.seq_len,
+        cfg.eval_batches,
+        generator=generator,
+    )
+    val_loss = estimate_loss(
+        model,
+        val_data,
+        cfg.batch_size,
+        cfg.seq_len,
+        cfg.eval_batches,
+        generator=generator,
+    )
+
+    record = {"step": cfg.max_steps, "train": train_loss, "val": val_loss}
+
+    print(f"step {cfg.max_steps}: train {train_loss:.3f}, val {val_loss:.3f}")
+
+    history.append(record)
+    return history
 
 
 # ===============================================================
@@ -174,12 +262,24 @@ def main() -> None:
     data = torch.tensor(tok.encode(text))
     n = int(0.9 * len(data))
     train_data, val_data = data[:n], data[n:]
-    print(f"{len(text):,} 个字符，词表 {tok.vocab_size}，train {n:,} / val {len(data) - n:,} tokens")
+    print(
+        f"{len(text):,} 个字符，词表 {tok.vocab_size}，train {n:,} / val {len(data) - n:,} tokens"
+    )
 
     cfg = TrainConfig()
-    model = GPT(GPTConfig(vocab_size=tok.vocab_size, max_seq_len=cfg.seq_len, d_model=128, n_heads=4, n_layers=4))
-    print(f"模型参数: {sum(p.numel() for p in model.parameters()):,}，瞎猜时的 loss = ln({tok.vocab_size}) = "
-          f"{torch.log(torch.tensor(tok.vocab_size)).item():.3f}")
+    model = GPT(
+        GPTConfig(
+            vocab_size=tok.vocab_size,
+            max_seq_len=cfg.seq_len,
+            d_model=128,
+            n_heads=4,
+            n_layers=4,
+        )
+    )
+    print(
+        f"模型参数: {sum(p.numel() for p in model.parameters()):,}，瞎猜时的 loss = ln({tok.vocab_size}) = "
+        f"{torch.log(torch.tensor(tok.vocab_size)).item():.3f}"
+    )
 
     prompt = torch.tensor([tok.encode("ROMEO:")])
     print("--- 训练前:")
