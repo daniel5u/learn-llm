@@ -53,7 +53,10 @@ def top_k_filter(logits: Tensor, k: int) -> Tensor:
     #     values[..., -1:]               第 k 大的值；用切片 -1: 而不是 -1，保留最后一维方便广播
     #     t.masked_fill(mask, value)
     #     float("-inf")
-    raise NotImplementedError
+    values, _= torch.topk(logits, k, -1)
+    k_value = values[..., -1:]
+    logits = logits.masked_fill(logits < k_value, float('-inf'))
+    return logits
 
 
 def sample_next_token(
@@ -72,7 +75,17 @@ def sample_next_token(
     #     torch.softmax(t, dim=-1)
     #     torch.multinomial(probs, 1, generator=generator) 每一行按概率抽 1 个下标: [B, V] -> [B, 1]
     #                                                      generator 用来固定随机种子，让结果可复现
-    raise NotImplementedError
+    if temperature == 0:
+        return logits.argmax(dim=-1, keepdim=True)
+    else:
+        logits = logits / temperature
+
+        if top_k:
+            logits = top_k_filter(logits, top_k)
+
+        logits = torch.softmax(logits, -1)
+    return torch.multinomial(logits, num_samples=1, generator=generator)
+
 
 
 @torch.no_grad()  # 生成不需要算梯度：省内存、更快
@@ -96,7 +109,12 @@ def generate(
     #     ids[:, -n:]                    取最后 n 个（不足 n 个时就是全部）
     #     logits[:, -1, :]               [B, T, V] -> [B, V]
     #     torch.cat([a, b], dim=1)       [B, T] 和 [B, 1] 拼成 [B, T+1]
-    raise NotImplementedError
+    for _ in range(max_new_tokens):
+        logits = model(token_ids[:, -model.cfg.max_seq_len:])[:, -1, :]
+        next_token = sample_next_token(logits, temperature, top_k, generator)
+        token_ids = torch.cat([token_ids, next_token], dim=1)
+    return token_ids
+
 
 
 def main() -> None:
