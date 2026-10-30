@@ -96,8 +96,9 @@ def generate(
     temperature: float = 1.0,
     top_k: int | None = None,
     generator: torch.Generator | None = None,
+    eos_id: int | None = None
 ) -> Tensor:
-    """token_ids [B, T] -> [B, T + max_new_tokens]（前 T 个就是原来的 prompt）"""
+    """token_ids [B, T] -> [B, T + tokens_before <eos>] / [B, T + max_new_tokens]（前 T 个就是原来的 prompt）"""
     # TODO 3: 循环 max_new_tokens 次:
     #           1. 只把最后 max_seq_len 个 token 喂给模型（位置表 wpe 只有这么长，再长就查不到了）
     #           2. model(...) 得到 logits，只取最后一个位置
@@ -113,6 +114,9 @@ def generate(
         logits = model(token_ids[:, -model.cfg.max_seq_len:])[:, -1, :]
         next_token = sample_next_token(logits, temperature, top_k, generator)
         token_ids = torch.cat([token_ids, next_token], dim=1)
+
+        if eos_id is not None and next_token.item() == eos_id:
+            break
     return token_ids
 
 

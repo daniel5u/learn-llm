@@ -166,9 +166,9 @@ def train(
 
     history = []
 
-    x, y = get_batch(train_data, cfg.batch_size, cfg.seq_len, generator)
-
     for i in range(cfg.max_steps):
+        x, y = get_batch(train_data, cfg.batch_size, cfg.seq_len, generator)
+
         if i % cfg.eval_interval == 0:
             train_loss = estimate_loss(
                 model,
@@ -193,8 +193,7 @@ def train(
 
             history.append(record)
 
-        if i != cfg.max_steps - 1:
-            train_step(model, optimizer, x, y)
+        train_step(model, optimizer, x, y)
 
     train_loss = estimate_loss(
         model,
@@ -221,7 +220,7 @@ def train(
     return history
 
 
-# ===============================================================
+# =======================na=======================================
 # 下面不是练习：数据下载、字符级 tokenizer，和把一切串起来的 main()
 # ===============================================================
 SHAKESPEARE_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
